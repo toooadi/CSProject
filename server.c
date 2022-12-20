@@ -99,6 +99,13 @@ int consume_newline(connection_t *conn) {
     return nl == '\n' ? 0 : 1;
 }
 
+void misbehaviour(connection_t *conn) {
+    //Here we basically only have to close the connection and kill the thread
+    close(conn->sock);
+    free(conn);
+    pthread_exit(0);
+}
+
 void *process(void *ptr) {
     //TODO: Handle closing and reopening
     connection_t *conn;
@@ -116,31 +123,28 @@ void *process(void *ptr) {
         //GET Case, we have GET[str]\n
         int keyLen;
         char *buf;
-        if (read_str(conn, buf, &keyLen) < 0){
-            //TODO: Misbehaviour (invalid request) (write function, should return and close )
-        } else {
-            if (consume_newline(conn) < 0) {/*TODO: Misbehaviour: invalid request*/};
+        if (read_str(conn, buf, &keyLen) < 0) misbehaviour(conn); 
+        if (consume_newline(conn) < 0) misbehaviour(conn);
 
-            //If we're here, we know that we have a correct request
-            pthread_mutex_lock(&map_mutex);
-            node *getVal = get(map, buf, keyLen);
-            pthread_mutex_unlock(&map_mutex);
-            if (!getVal) {/*TODO: ERR Handle*/}
-            
-            int valLen = getVal->valLen;
-            char *val = getVal->value;
-            char *intStr;
-            //char *resp = "VALUE";
-            sprintf(intStr, "$%d$", valLen);
-            int intStrLen = strlen(intStr);
-            char *resp = strcat("VALUE", intStr);
-            if (write(conn->sock, resp, 5 + intStrLen) <= 0) {/*Maybe TODO: Handle error*/};
-            if (write(conn->sock, val, valLen) <= 0) {/*Maybe TODO: Handle error*/};
-            if (write(conn->sock, "\n", 1) <= 0) {/*Maybe TODO: Handle error*/};
+        //If we're here, we know that we have a correct request
+        pthread_mutex_lock(&map_mutex);
+        node *getVal = get(map, buf, keyLen);
+        pthread_mutex_unlock(&map_mutex);
+        if (!getVal) {/*TODO: ERR Handle*/}
+        
+        int valLen = getVal->valLen;
+        char *val = getVal->value;
+        char *intStr;
+        //char *resp = "VALUE";
+        sprintf(intStr, "$%d$", valLen);
+        int intStrLen = strlen(intStr);
+        char *resp = strcat("VALUE", intStr);
+        if (write(conn->sock, resp, 5 + intStrLen) <= 0) {/*Maybe TODO: Handle error*/};
+        if (write(conn->sock, val, valLen) <= 0) {/*Maybe TODO: Handle error*/};
+        if (write(conn->sock, "\n", 1) <= 0) {/*Maybe TODO: Handle error*/};
 
-            //TODO: Response was sent, wait for next request
+        //TODO: Response was sent, wait for next request
 
-        }
     } else if (opr == 1) {
         //SET Case, we have SET[str]\n
         int keyLen;
@@ -148,9 +152,9 @@ void *process(void *ptr) {
         int valLen;
         char *valBuf;
         if (read_str(conn, keyBuf, &keyLen) < 0 || read_str(conn, valBuf, &valLen) < 0){
-            //TODO: Misbehaviour (invalid request) (write function, should return and close )
+            misbehaviour(conn); //invalid request
         } 
-        if (consume_newline(conn) < 0) {/*TODO: Misbehaviour: invalid request*/};
+        if (consume_newline(conn) < 0) misbehaviour(conn); //invalid request
 
         //If we're here, we know that we have a valid request
         pthread_mutex_lock(&map_mutex);
@@ -165,8 +169,8 @@ void *process(void *ptr) {
             //TODO: Response was sent, wait for next request
         }
 
-    } else {
-        //TODO:Misbehaviour case
+    } else { //invalid request: Command was neither GET nor SET
+        misbehaviour(conn);
     }
     
 }
