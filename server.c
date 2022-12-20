@@ -116,13 +116,15 @@ void *process(void *ptr) {
         //GET Case, we have GET[str]\n
         int keyLen;
         char *buf;
-        if (read_str(conn, buf, keyLen) < 0){
-            //TODO: Send ERR (write function, should return and close )
+        if (read_str(conn, buf, &keyLen) < 0){
+            //TODO: Misbehaviour (invalid request) (write function, should return and close )
         } else {
             if (consume_newline(conn) < 0) {/*TODO: Misbehaviour: invalid request*/};
 
             //If we're here, we know that we have a correct request
+            pthread_mutex_lock(&map_mutex);
             node *getVal = get(map, buf, keyLen);
+            pthread_mutex_unlock(&map_mutex);
             if (!getVal) {/*TODO: ERR Handle*/}
             
             int valLen = getVal->valLen;
@@ -141,6 +143,28 @@ void *process(void *ptr) {
         }
     } else if (opr == 1) {
         //SET Case, we have SET[str]\n
+        int keyLen;
+        char *keyBuf;
+        int valLen;
+        char *valBuf;
+        if (read_str(conn, keyBuf, &keyLen) < 0 || read_str(conn, valBuf, &valLen) < 0){
+            //TODO: Misbehaviour (invalid request) (write function, should return and close )
+        } 
+        if (consume_newline(conn) < 0) {/*TODO: Misbehaviour: invalid request*/};
+
+        //If we're here, we know that we have a valid request
+        pthread_mutex_lock(&map_mutex);
+        int stored = set(map, keyBuf, keyLen, valBuf, valLen);
+        pthread_mutex_unlock(&map_mutex);
+        if (stored < 0) {
+            /*Send ERR, out of mem*/
+        } else { //Maybe can remove else, implementation dependent
+            //Success
+            if (write(conn->sock, "OK\n", 3) <= 0) {/*Maybe TODO: Handle error*/};
+
+            //TODO: Response was sent, wait for next request
+        }
+
     } else {
         //TODO:Misbehaviour case
     }
