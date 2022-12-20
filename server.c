@@ -30,24 +30,30 @@ pthread_mutex_t map_mutex;
 */
 int find_strlen(int sock) {
     char fst;
-    char *str;
+    char *str = "";
     //The if checks if there was an error in the read
     if (read(sock, &fst, sizeof(char)) <= 0) return -1;
     int i = 0;
     while (fst != '$') {
         //greater than max possible size
-        if (++i > 7) return -1;
+        if (++i > 7) {free(str); return -1;}
 
         size_t len = strlen(str);
         char *strc = malloc(len + 1 + 1);
         strcpy(strc, str);
+        if (strlen(str)) free(str); //only free the malloced memory if it isn't ""
         strc[len] = fst;
         strc[len + 1] = '\0';
         str = strc;
-        if (read(sock, &fst, sizeof(char)) <= 0) return -1;
+        if (read(sock, &fst, sizeof(char)) <= 0) {free(str); return -1;}
     }
     //return -1 if we have $$
-    return i == 0 ? -1 : atoi(str);
+    if (i == 0) {return -1;
+    } else {
+        int res = atoi(str);
+        free(str);
+        return res;
+    }
 
 }
 
@@ -64,7 +70,7 @@ int read_str(connection_t *conn, char *buffer, int *len) {
         //TODO: Check out of memory
         buffer = (char *)malloc(strlen * sizeof(char));
         //maybe check < strlen and throw error then
-        if (read(conn->sock, buffer, strlen) <= 0) return -1;
+        if (read(conn->sock, buffer, strlen) <= 0) {free(buffer); return -1;}
 
         return 0;
     } else return -1;
@@ -83,10 +89,13 @@ int read_opr(connection_t *conn) {
     char *get = "GET";
     char *set = "SET";
     if (strcmp(buf, get)) {
+        free(buf);
         return 0;
     } else if (strcmp(buf, set)) {
+        free(buf);
         return 1;
     } else {
+        free(buf);
         return -1;
     }
 }
@@ -124,13 +133,17 @@ void *process(void *ptr) {
         int keyLen;
         char *buf;
         if (read_str(conn, buf, &keyLen) < 0) misbehaviour(conn); 
-        if (consume_newline(conn) < 0) misbehaviour(conn);
+        if (consume_newline(conn) < 0) {free(buf); misbehaviour(conn);}
 
         //If we're here, we know that we have a correct request
         pthread_mutex_lock(&map_mutex);
         node *getVal = get(map, buf, keyLen);
         pthread_mutex_unlock(&map_mutex);
-        if (!getVal) {/*TODO: ERR Handle*/}
+        if (!getVal) {
+            if (write(conn->sock, "ERR\n", 4) <= 0) {/*Maybe TODO: Handle error*/};
+            free(buf);
+            //TODO: Enter WAIT loop, do tail-call
+        }
         
         int valLen = getVal->valLen;
         char *val = getVal->value;
@@ -143,6 +156,7 @@ void *process(void *ptr) {
         if (write(conn->sock, val, valLen) <= 0) {/*Maybe TODO: Handle error*/};
         if (write(conn->sock, "\n", 1) <= 0) {/*Maybe TODO: Handle error*/};
 
+        free(buf);
         //TODO: Response was sent, wait for next request
 
     } else if (opr == 1) {
@@ -154,18 +168,20 @@ void *process(void *ptr) {
         if (read_str(conn, keyBuf, &keyLen) < 0 || read_str(conn, valBuf, &valLen) < 0){
             misbehaviour(conn); //invalid request
         } 
-        if (consume_newline(conn) < 0) misbehaviour(conn); //invalid request
+        if (consume_newline(conn) < 0) {free(keyBuf); free(valBuf); misbehaviour(conn);} //invalid request
 
         //If we're here, we know that we have a valid request
         pthread_mutex_lock(&map_mutex);
         int stored = set(map, keyBuf, keyLen, valBuf, valLen);
         pthread_mutex_unlock(&map_mutex);
         if (stored < 0) {
-            /*Send ERR, out of mem*/
+            if (write(conn->sock, "ERR\n", 4) <= 0) {/*Maybe TODO: Handle error*/};
+            free(keyBuf); free(valBuf);
+            //TODO: Enter WAIT, maybe form as return statement, so current stack frame can be deleted
         } else { //Maybe can remove else, implementation dependent
             //Success
             if (write(conn->sock, "OK\n", 3) <= 0) {/*Maybe TODO: Handle error*/};
-
+            free(keyBuf); free(valBuf);
             //TODO: Response was sent, wait for next request
         }
 
