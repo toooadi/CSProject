@@ -9,6 +9,7 @@
 #include <string.h>
 #include <poll.h>
 #include "map.h"
+#include <arpa/inet.h>
 
 typedef struct{
     int sock;
@@ -206,7 +207,7 @@ void *process(void *ptr) {
 
             return waitAndPoll(conn);
 
-        } else { //Maybe can remove else, implementation dependent
+        } else {
             //Success
             if (write(conn->sock, "OK\n", 3) <= 0) {/*Maybe TODO: Handle error*/};
             free(keyBuf); free(valBuf);
@@ -218,4 +219,44 @@ void *process(void *ptr) {
         return NULL;
     }
     
+}
+
+int main() {
+    int sock = -1;
+    struct sockaddr_in address;
+    u_int16_t port = 5555;
+    connection_t *connection;
+    pthread_t thread;
+
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock <= 0) {
+        fprintf(stderr, "Error: Cannot create socket.\n");
+        return -1;
+    }
+    address.sin_family = AF_INET;
+    //This is 127.0.0.1 (i.e. localhost)
+
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(port);
+
+    //bind socket to port
+    if (bind(sock, (struct sockaddr *)&address, sizeof(struct sockaddr_in)) < 0) {
+        fprintf(stderr, "error: cannot bind socket to port %d\n",  port);
+        return -5;
+    }
+
+    printf("ready and listening\n");
+
+    while(1) {
+        connection = (connection_t *)malloc(sizeof(connection_t));
+        connection->sock = accept(sock, &connection->address, &connection->addr_len);
+        if (connection->sock <= 0) {
+            free(connection);
+        } else {
+            pthread_create(&thread, 0, process, (void *)connection);
+            pthread_detach(thread);
+        }
+
+    }
+
 }
