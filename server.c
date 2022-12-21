@@ -138,9 +138,6 @@ void *waitAndPoll(connection_t *conn) {
         }
     }
     return NULL;
-
-    
-
 }
 
 void *process(void *ptr) {
