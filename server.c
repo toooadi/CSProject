@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <linux/in.h>
 #include <string.h>
+#include <poll.h>
 #include "map.h"
 
 typedef struct{
@@ -79,8 +80,7 @@ int read_str(connection_t *conn, char *buffer, int *len) {
 /*Return value:
     0 if GET
     1 if SET
-    -1 on error
-*/
+    -1 on error*/
 int read_opr(connection_t *conn) {
     char *buf = (char *)malloc(4 * sizeof(char));
     buf[3] = '\0';
@@ -115,6 +115,34 @@ void misbehaviour(connection_t *conn) {
     pthread_exit(0);
 }
 
+//need this function declaration to call process in waitAndPoll
+void *process(void *ptr);
+/*This is called as soon as we have finished one request and wait for the next
+not sure if needed, can also have infinite loop in process*/
+void *waitAndPoll(connection_t *conn) {
+    //poll(...) usage: struct pollfd -> basically array of file descriptors, 
+    //                 nfds -> # of fds, timeout -> time to block waiting for fd
+    while (1) {
+        struct pollfd *pfd = calloc(1, sizeof(struct pollfd));
+        pfd->fd = conn->sock;
+        pfd->events = POLLIN;
+        poll(pfd, 1, 1000);
+        if (pfd->revents & POLLIN) {
+            free(pfd);
+            return process(conn);
+        } else if (pfd->revents & POLLHUP) {
+            close(conn->sock);
+            free(pfd);
+            pthread_exit(0);
+            return NULL;
+        }
+    }
+    return NULL;
+
+    
+
+}
+
 void *process(void *ptr) {
     //TODO: Handle closing and reopening
     connection_t *conn;
@@ -142,13 +170,13 @@ void *process(void *ptr) {
         if (!getVal) {
             if (write(conn->sock, "ERR\n", 4) <= 0) {/*Maybe TODO: Handle error*/};
             free(buf);
-            //TODO: Enter WAIT loop, do tail-call
+
+            return waitAndPoll(conn);
         }
         
         int valLen = getVal->valLen;
         char *val = getVal->value;
         char *intStr;
-        //char *resp = "VALUE";
         sprintf(intStr, "$%d$", valLen);
         int intStrLen = strlen(intStr);
         char *resp = strcat("VALUE", intStr);
@@ -157,7 +185,8 @@ void *process(void *ptr) {
         if (write(conn->sock, "\n", 1) <= 0) {/*Maybe TODO: Handle error*/};
 
         free(buf);
-        //TODO: Response was sent, wait for next request
+
+        return waitAndPoll(conn);
 
     } else if (opr == 1) {
         //SET Case, we have SET[str]\n
@@ -177,16 +206,19 @@ void *process(void *ptr) {
         if (stored < 0) {
             if (write(conn->sock, "ERR\n", 4) <= 0) {/*Maybe TODO: Handle error*/};
             free(keyBuf); free(valBuf);
-            //TODO: Enter WAIT, maybe form as return statement, so current stack frame can be deleted
+
+            return waitAndPoll(conn);
+
         } else { //Maybe can remove else, implementation dependent
             //Success
             if (write(conn->sock, "OK\n", 3) <= 0) {/*Maybe TODO: Handle error*/};
             free(keyBuf); free(valBuf);
-            //TODO: Response was sent, wait for next request
+            return waitAndPoll(conn);
         }
 
     } else { //invalid request: Command was neither GET nor SET
         misbehaviour(conn);
+        return NULL;
     }
     
 }
