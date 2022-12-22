@@ -32,7 +32,7 @@ struct node *get(struct node *map, char *key, int keylen) {
         char *nodekey = map->key;
         int nodelen = map->keyLen;
         if (nodelen == keylen) {
-            if (memcmp(key, nodekey, nodelen)) {
+            if (!memcmp(key, nodekey, nodelen)) {
                 return map;
             }
         }
@@ -42,28 +42,31 @@ struct node *get(struct node *map, char *key, int keylen) {
     return NULL;
 }
 
-int set(struct node *map, char *key, int keyLen, char *value, int valLen) {
+int set(struct node **map, char *key, int keyLen, char *value, int valLen) {
     struct node *prev = NULL;
-    while(map) {
-        char *nodekey = map->key;
-        int nodelen = map->keyLen;
+    struct node *curr = *map;
+    while(curr) {
+        char *nodekey = curr->key;
+        int nodelen = curr->keyLen;
         if (nodelen == keyLen) {
-            if (memcmp(key, nodekey, nodelen)) {
-                map->value = value;
-                map->valLen = valLen;
+            if (!memcmp(key, nodekey, nodelen)) {
+                //printf("here2: %.*s\n", keyLen, nodekey);
+                curr->value = memcpy(malloc(valLen), value, valLen);
+                curr->valLen = valLen;
                 return 0;
             }
         }
-        prev = map;
-        map = map->next;
+        prev = curr;
+        curr = curr->next;
     }
     //mapping doesn't yet exist, create new
     struct node *newNode = (struct node *)malloc(sizeof (struct node));
     if(newNode) {
+        if (!(*map)) *map = newNode; //set map to first node
         if (prev) prev->next = newNode;
-        newNode->key = key;
+        newNode->key = memcpy(malloc(keyLen), key, keyLen);
         newNode->keyLen = keyLen;
-        newNode->value = value;
+        newNode->value = memcpy(malloc(valLen), value, valLen);
         newNode->valLen = valLen;
         newNode->next = NULL;
         return 0;
@@ -124,7 +127,7 @@ int find_strlen(int sock) {
 
 }
 
-int read_str(connection_t *conn, char *buffer, int *len) {
+int read_str(connection_t *conn, char **buffer, int *len) {
     char fst;
     //Also check here whether read returns an error value, <= because this would be invalid input
     if (read(conn->sock, &fst, 1) <= 0) return -1;
@@ -135,9 +138,9 @@ int read_str(connection_t *conn, char *buffer, int *len) {
         *len = strlen;
         //Right now, the file pointer should be at the first char of the key/value
         //TODO: Check out of memory
-        buffer = (char *)malloc(strlen * sizeof(char));
+        *buffer = (char *)malloc(strlen * sizeof(char));
         //maybe check < strlen and throw error then
-        if (read(conn->sock, buffer, strlen) <= 0) {free(buffer); return -1;}
+        if (read(conn->sock, *buffer, strlen) <= 0) {free(*buffer); return -1;}
 
         return 0;
     } else return -1;
@@ -154,10 +157,10 @@ int read_opr(connection_t *conn) {
     if (read(conn->sock, buf, 3) <= 0) return -1;
     char *get = "GET";
     char *set = "SET";
-    if (strcmp(buf, get)) {
+    if (!strcmp(buf, get)) {
         free(buf);
         return 0;
-    } else if (strcmp(buf, set)) {
+    } else if (!strcmp(buf, set)) {
         free(buf);
         return 1;
     } else {
@@ -209,22 +212,19 @@ void *waitAndPoll(connection_t *conn) {
 void *process(void *ptr) {
     //TODO: Handle closing and reopening
     connection_t *conn;
-    //long addr;
 
     //connection is NULL
     if (!ptr) pthread_exit(0);
     conn = (connection_t *)ptr;
-    //client IP, not needed
-    //addr = (long)((struct sockaddr_in *)&conn->address)->sin_addr.s_addr;
 
     //First, check whether first three chars are GET or SET
     int opr = read_opr(conn);
     if (opr == 0) {
-        printf("In GET");
+        printf("In GET\n");
         //GET Case, we have GET[str]\n
         int keyLen;
         char *buf;
-        if (read_str(conn, buf, &keyLen) < 0) misbehaviour(conn); 
+        if (read_str(conn, &buf, &keyLen) < 0) misbehaviour(conn); 
         if (consume_newline(conn) < 0) {free(buf); misbehaviour(conn);}
 
         //If we're here, we know that we have a correct request
@@ -234,16 +234,17 @@ void *process(void *ptr) {
         if (!getVal) {
             if (write(conn->sock, "ERR\n", 4) <= 0) {/*Maybe TODO: Handle error*/};
             free(buf);
-
             return waitAndPoll(conn);
         }
-        
         int valLen = getVal->valLen;
         char *val = getVal->value;
-        char *intStr;
+        char intStr[8];
         sprintf(intStr, "$%d$", valLen);
         int intStrLen = strlen(intStr);
-        char *resp = strcat("VALUE", intStr);
+        char vs[intStrLen + 5];
+        sprintf(vs, "VALUE");
+        char *resp = strcat(vs, intStr);
+        printf("valString\n");
         if (write(conn->sock, resp, 5 + intStrLen) <= 0) {/*Maybe TODO: Handle error*/};
         if (write(conn->sock, val, valLen) <= 0) {/*Maybe TODO: Handle error*/};
         if (write(conn->sock, "\n", 1) <= 0) {/*Maybe TODO: Handle error*/};
@@ -253,20 +254,20 @@ void *process(void *ptr) {
         return waitAndPoll(conn);
 
     } else if (opr == 1) {
-        printf("In SET");
+        printf("In SET\n");
         //SET Case, we have SET[str]\n
         int keyLen;
         char *keyBuf;
         int valLen;
         char *valBuf;
-        if (read_str(conn, keyBuf, &keyLen) < 0 || read_str(conn, valBuf, &valLen) < 0){
+        if (read_str(conn, &keyBuf, &keyLen) < 0 || read_str(conn, &valBuf, &valLen) < 0){
             misbehaviour(conn); //invalid request
         } 
         if (consume_newline(conn) < 0) {free(keyBuf); free(valBuf); misbehaviour(conn);} //invalid request
 
         //If we're here, we know that we have a valid request
         pthread_mutex_lock(&map_mutex);
-        int stored = set(map, keyBuf, keyLen, valBuf, valLen);
+        int stored = set(&map, keyBuf, keyLen, valBuf, valLen);
         pthread_mutex_unlock(&map_mutex);
         if (stored < 0) {
             if (write(conn->sock, "ERR\n", 4) <= 0) {/*Maybe TODO: Handle error*/};
@@ -282,7 +283,7 @@ void *process(void *ptr) {
         }
 
     } else { //invalid request: Command was neither GET nor SET
-        printf("In ERROR");
+        printf("In ERROR\n");
         misbehaviour(conn);
         return NULL;
     }
@@ -313,22 +314,20 @@ int main() {
         return -5;
     }
 
-    if (listen(sock, 1000) < 0) {
+    if (listen(sock, 5) < 0) {
         fprintf(stderr, "Cannot listen on port");
         return -5;
     }
-
+    printf("here\n");
     printf("ready and listening on port %d\n", ntohs(address.sin_port));
 
     while(1) {
         connection = (connection_t *)malloc(sizeof(connection_t));
         connection->sock = accept(sock, &(connection->address), &(connection->addr_len));
-        printf("here");
         //connection->sock = accept(sock, NULL, NULL);
         if (connection->sock <= 0) {
             free(connection);
         } else {
-            printf("here");
             pthread_create(&thread, 0, process, (void *)connection);
             pthread_detach(thread);
         }
