@@ -11,6 +11,7 @@
 #include <poll.h>
 //#include "map.h"
 #include <arpa/inet.h>
+#include <errno.h>
 
 /*  
 *   FIRST PART:
@@ -219,6 +220,7 @@ void *process(void *ptr) {
     //First, check whether first three chars are GET or SET
     int opr = read_opr(conn);
     if (opr == 0) {
+        printf("In GET");
         //GET Case, we have GET[str]\n
         int keyLen;
         char *buf;
@@ -251,6 +253,7 @@ void *process(void *ptr) {
         return waitAndPoll(conn);
 
     } else if (opr == 1) {
+        printf("In SET");
         //SET Case, we have SET[str]\n
         int keyLen;
         char *keyBuf;
@@ -279,6 +282,7 @@ void *process(void *ptr) {
         }
 
     } else { //invalid request: Command was neither GET nor SET
+        printf("In ERROR");
         misbehaviour(conn);
         return NULL;
     }
@@ -309,18 +313,27 @@ int main() {
         return -5;
     }
 
-    printf("ready and listening\n");
+    if (listen(sock, 1000) < 0) {
+        fprintf(stderr, "Cannot listen on port");
+        return -5;
+    }
+
+    printf("ready and listening on port %d\n", ntohs(address.sin_port));
 
     while(1) {
         connection = (connection_t *)malloc(sizeof(connection_t));
         connection->sock = accept(sock, &(connection->address), &(connection->addr_len));
+        printf("here");
+        //connection->sock = accept(sock, NULL, NULL);
         if (connection->sock <= 0) {
             free(connection);
         } else {
+            printf("here");
             pthread_create(&thread, 0, process, (void *)connection);
             pthread_detach(thread);
         }
 
     }
+    return 0;
 
 }
