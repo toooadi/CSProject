@@ -2,14 +2,79 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <pthread.h>
-#include <linux/in.h>
+//#include <linux/in.h>
 #include <string.h>
 #include <poll.h>
-#include "map.h"
+//#include "map.h"
 #include <arpa/inet.h>
+
+/*  
+*   FIRST PART:
+*       MAP IMPLEMENTATION
+*/
+struct node
+{
+char *key;  //key part
+int keyLen;
+char *value;  // value part
+int valLen;
+struct node *next;
+};
+
+//Have err when key can't be stored (out of memory or similar) or doesn't exist
+struct node *get(struct node *map, char *key, int keylen) {
+    while(map) {
+        char *nodekey = map->key;
+        int nodelen = map->keyLen;
+        if (nodelen == keylen) {
+            if (memcmp(key, nodekey, nodelen)) {
+                return map;
+            }
+        }
+        map = map->next;
+    }
+    //there was no such element => error
+    return NULL;
+}
+
+int set(struct node *map, char *key, int keyLen, char *value, int valLen) {
+    struct node *prev = NULL;
+    while(map) {
+        char *nodekey = map->key;
+        int nodelen = map->keyLen;
+        if (nodelen == keyLen) {
+            if (memcmp(key, nodekey, nodelen)) {
+                map->value = value;
+                map->valLen = valLen;
+                return 0;
+            }
+        }
+        prev = map;
+        map = map->next;
+    }
+    //mapping doesn't yet exist, create new
+    struct node *newNode = (struct node *)malloc(sizeof (struct node));
+    if(newNode) {
+        if (prev) prev->next = newNode;
+        newNode->key = key;
+        newNode->keyLen = keyLen;
+        newNode->value = value;
+        newNode->valLen = valLen;
+        newNode->next = NULL;
+        return 0;
+    }
+    //will only reach here if not enough mem in malloc
+    return -1;
+}
+
+/*
+*   SECOND PART:
+*       SERVER IMPLEMENTATION
+*/
 
 typedef struct{
     int sock;
@@ -21,7 +86,6 @@ typedef struct node node;
 
 node *map = NULL;
 pthread_mutex_t map_mutex;
-//max length in Bytes is 4194304 (i.e. cannot have more than 7 digits)
 
 //this is the functionality of the thread, hopefully this is right
 /* The thread should:
@@ -144,13 +208,13 @@ void *waitAndPoll(connection_t *conn) {
 void *process(void *ptr) {
     //TODO: Handle closing and reopening
     connection_t *conn;
-    long addr = 0;
+    //long addr;
 
     //connection is NULL
     if (!ptr) pthread_exit(0);
     conn = (connection_t *)ptr;
-    //client IP
-    addr = (long)((struct sockaddr_in *)&conn->address)->sin_addr.s_addr;
+    //client IP, not needed
+    //addr = (long)((struct sockaddr_in *)&conn->address)->sin_addr.s_addr;
 
     //First, check whether first three chars are GET or SET
     int opr = read_opr(conn);
@@ -249,7 +313,7 @@ int main() {
 
     while(1) {
         connection = (connection_t *)malloc(sizeof(connection_t));
-        connection->sock = accept(sock, &connection->address, &connection->addr_len);
+        connection->sock = accept(sock, &(connection->address), &(connection->addr_len));
         if (connection->sock <= 0) {
             free(connection);
         } else {
