@@ -337,7 +337,7 @@ int main() {
             free(connection);
         } else {
             //IMPORTANT: Set socket nonblocking
-            if (setnonblock(connection->sock) < 0) printf("Couldn't set socket nonblocking.\n");
+            //if (setnonblock(connection->sock) < 0) printf("Couldn't set socket nonblocking.\n");
             pthread_create(&thread, 0, process, (void *)connection);
             pthread_detach(thread);
         }
