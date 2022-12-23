@@ -6,12 +6,11 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <pthread.h>
-//#include <linux/in.h>
 #include <string.h>
 #include <poll.h>
-//#include "map.h"
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 
 /*  
 *   FIRST PART:
@@ -122,7 +121,7 @@ int find_strlen(int sock) {
     } else {
         int res = atoi(str);
         free(str);
-        return res;
+        return (res > 4194304) || (res <= 0) ? -1 : res; //check for max size or negative value
     }
 
 }
@@ -137,10 +136,11 @@ int read_str(connection_t *conn, char **buffer, int *len) {
         if (strlen < 0) return -1;
         *len = strlen;
         //Right now, the file pointer should be at the first char of the key/value
-        //TODO: Check out of memory
         *buffer = (char *)malloc(strlen * sizeof(char));
+        //out of memory
+        if (!buffer) return -1;
         //maybe check < strlen and throw error then
-        if (read(conn->sock, *buffer, strlen) <= 0) {free(*buffer); return -1;}
+        if (read(conn->sock, *buffer, strlen) < strlen) {printf("read less than expected. \n"); free(*buffer); return -1;}
 
         return 0;
     } else return -1;
@@ -187,11 +187,13 @@ void misbehaviour(connection_t *conn) {
 //need this function declaration to call process in waitAndPoll
 void *process(void *ptr);
 /*This is called as soon as we have finished one request and wait for the next
-not sure if needed, can also have infinite loop in process*/
+If a new request arrives, we enter process again.
+process() call has to be in the return statement so we don't waste stack space*/
 void *waitAndPoll(connection_t *conn) {
     //poll(...) usage: struct pollfd -> basically array of file descriptors, 
     //                 nfds -> # of fds, timeout -> time to block waiting for fd
     while (1) {
+        //calloc is important, as we set flags
         struct pollfd *pfd = calloc(1, sizeof(struct pollfd));
         pfd->fd = conn->sock;
         pfd->events = POLLIN;
@@ -209,8 +211,18 @@ void *waitAndPoll(connection_t *conn) {
     return NULL;
 }
 
+/* We want the socket to be non-blocking since we might block indefinitely otherwise
+*  Returns: -1 on failure
+            0 on success */
+int setnonblock(int sock) {
+   int flags;
+   flags = fcntl(sock, F_GETFL, 0);
+   if (-1 == flags)
+      return -1;
+   return fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+}
+
 void *process(void *ptr) {
-    //TODO: Handle closing and reopening
     connection_t *conn;
 
     //connection is NULL
@@ -220,7 +232,6 @@ void *process(void *ptr) {
     //First, check whether first three chars are GET or SET
     int opr = read_opr(conn);
     if (opr == 0) {
-        printf("In GET\n");
         //GET Case, we have GET[str]\n
         int keyLen;
         char *buf;
@@ -244,7 +255,6 @@ void *process(void *ptr) {
         char vs[intStrLen + 5];
         sprintf(vs, "VALUE");
         char *resp = strcat(vs, intStr);
-        printf("valString\n");
         if (write(conn->sock, resp, 5 + intStrLen) <= 0) {/*Maybe TODO: Handle error*/};
         if (write(conn->sock, val, valLen) <= 0) {/*Maybe TODO: Handle error*/};
         if (write(conn->sock, "\n", 1) <= 0) {/*Maybe TODO: Handle error*/};
@@ -254,7 +264,7 @@ void *process(void *ptr) {
         return waitAndPoll(conn);
 
     } else if (opr == 1) {
-        printf("In SET\n");
+        //printf("In SET\n");
         //SET Case, we have SET[str]\n
         int keyLen;
         char *keyBuf;
@@ -283,7 +293,7 @@ void *process(void *ptr) {
         }
 
     } else { //invalid request: Command was neither GET nor SET
-        printf("In ERROR\n");
+        //printf("In ERROR\n");
         misbehaviour(conn);
         return NULL;
     }
@@ -303,7 +313,6 @@ int main() {
         return -1;
     }
     address.sin_family = AF_INET;
-    //This is 127.0.0.1 (i.e. localhost)
 
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
@@ -318,7 +327,6 @@ int main() {
         fprintf(stderr, "Cannot listen on port");
         return -5;
     }
-    printf("here\n");
     printf("ready and listening on port %d\n", ntohs(address.sin_port));
 
     while(1) {
@@ -328,6 +336,8 @@ int main() {
         if (connection->sock <= 0) {
             free(connection);
         } else {
+            //IMPORTANT: Set socket nonblocking
+            if (setnonblock(connection->sock) < 0) printf("Couldn't set socket nonblocking.\n");
             pthread_create(&thread, 0, process, (void *)connection);
             pthread_detach(thread);
         }

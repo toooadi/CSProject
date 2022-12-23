@@ -1,0 +1,5 @@
+*.py
+perl*
+py*
+server
+badstring
