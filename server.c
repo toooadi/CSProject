@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 
 /*  
 *   FIRST PART:
@@ -141,7 +142,7 @@ int read_str(connection_t *conn, char **buffer, int *len) {
         //out of memory
         if (!buffer) return -1;
         //maybe check < strlen and throw error then
-        int temp = read(conn->sock, *buffer, strlen);
+        int temp = cread(conn->sock, *buffer, strlen);
         if (temp < strlen) {printf("read less than expected. %d %d\n", temp, strlen); free(*buffer); return -1;}
 
         return 0;
@@ -166,6 +167,7 @@ int read_opr(connection_t *conn) {
         free(buf);
         return 1;
     } else {
+        //printf("%s\n", buf);
         free(buf);
         return -1;
     }
@@ -214,6 +216,24 @@ void *waitAndPoll(connection_t *conn) {
     return NULL;
 }
 
+int cread(int sock, char *buf, size_t nBytes) {
+    int read_bytes = 0;
+    int tries = 0;
+    while (read_bytes < nBytes && (tries < 1000)) {
+        int newBytes = read(sock, buf + read_bytes, nBytes - read_bytes);
+
+        if (newBytes < 0)  {int e = errno; printf("%d\n", e); return -1;}
+        read_bytes += newBytes > 0 ? newBytes : 0;
+        int count;
+        ioctl(sock, FIONREAD, &count);
+        if (!(read_bytes == nBytes)) {
+            usleep(500);
+            tries++;
+        }
+    }
+    return read_bytes;
+}
+
 /* We want the socket to be non-blocking since we might block indefinitely otherwise
 *  Returns: -1 on failure
             0 on success */
@@ -234,14 +254,12 @@ void *process(void *ptr) {
 
     //First, check whether first three chars are GET or SET
     int opr = read_opr(conn);
-    //printf("here %d\n", opr);
     if (opr == 0) {
         //GET Case, we have GET[str]\n
         int keyLen;
         char *buf;
         if (read_str(conn, &buf, &keyLen) < 0) misbehaviour(conn); 
         if (consume_newline(conn) < 0) {free(buf); misbehaviour(conn);}
-
         //If we're here, we know that we have a correct request
         pthread_mutex_lock(&map_mutex);
         node *getVal = get(map, buf, keyLen);
@@ -340,8 +358,6 @@ int main() {
         if (connection->sock <= 0) {
             free(connection);
         } else {
-            //IMPORTANT: Set socket nonblocking
-            //if (setnonblock(connection->sock) < 0) printf("Couldn't set socket nonblocking.\n");
             pthread_create(&thread, 0, process, (void *)connection);
             pthread_detach(thread);
         }
