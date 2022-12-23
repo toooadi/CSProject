@@ -362,7 +362,7 @@ const testGenerators = {
 	},
 
 	// Random
-	...generateRandomTests('small', 5, 10, 5, 10, randAlphByteString),
+	...generateRandomTests('small', 5, 20, 5, 10, randAlphByteString),
 	...generateRandomTests('medium', 5, 100, 50, 100, randAlphByteString),
 	...generateRandomTests('large', 5, 1000, 500, 1000, randAlphByteString),
 

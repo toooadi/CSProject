@@ -102,10 +102,11 @@ int find_strlen(int sock) {
     char *str = "";
     //The if checks if there was an error in the read
     if (read(sock, &fst, sizeof(char)) <= 0) return -1;
+    if (fst == '0') return -1; //error if 0 is prepended
     int i = 0;
     while (fst != '$') {
         //greater than max possible size
-        if (++i > 7) {free(str); return -1;}
+        if (++i > 8) {free(str); return -1;}
 
         size_t len = strlen(str);
         char *strc = malloc(len + 1 + 1);
@@ -121,7 +122,7 @@ int find_strlen(int sock) {
     } else {
         int res = atoi(str);
         free(str);
-        return (res > 4194304) || (res <= 0) ? -1 : res; //check for max size or negative value
+        return (res > 33554432) || (res <= 0) ? -1 : res; //check for max size or negative value
     }
 
 }
@@ -140,7 +141,8 @@ int read_str(connection_t *conn, char **buffer, int *len) {
         //out of memory
         if (!buffer) return -1;
         //maybe check < strlen and throw error then
-        if (read(conn->sock, *buffer, strlen) < strlen) {printf("read less than expected. \n"); free(*buffer); return -1;}
+        int temp = read(conn->sock, *buffer, strlen);
+        if (temp < strlen) {printf("read less than expected. %d %d\n", temp, strlen); free(*buffer); return -1;}
 
         return 0;
     } else return -1;
@@ -174,7 +176,7 @@ int read_opr(connection_t *conn) {
 int consume_newline(connection_t *conn) {
     char nl;
     if (read(conn->sock, &nl, 1) <= 0) return -1;
-    return nl == '\n' ? 0 : 1;
+    return nl == '\n' ? 0 : -1;
 }
 
 void misbehaviour(connection_t *conn) {
@@ -200,6 +202,7 @@ void *waitAndPoll(connection_t *conn) {
         poll(pfd, 1, 1000);
         if (pfd->revents & POLLIN) {
             free(pfd);
+            usleep(250);
             return process(conn);
         } else if (pfd->revents & POLLHUP) {
             close(conn->sock);
@@ -231,6 +234,7 @@ void *process(void *ptr) {
 
     //First, check whether first three chars are GET or SET
     int opr = read_opr(conn);
+    //printf("here %d\n", opr);
     if (opr == 0) {
         //GET Case, we have GET[str]\n
         int keyLen;
